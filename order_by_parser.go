@@ -19,7 +19,7 @@ func NewOrderByLexer() *lexer.StatefulDefinition {
 
 func NewOrderByParser() *participle.Parser[OrderBy] {
 	return participle.MustBuild[OrderBy](
-		participle.Lexer(NewOrderByLexer()),
+		participle.Lexer(OrderByLexer),
 		participle.Elide("whitespace"),
 	)
 }

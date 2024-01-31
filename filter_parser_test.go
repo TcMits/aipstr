@@ -61,6 +61,7 @@ func TestFilter(t *testing.T) {
 		{"foo.bar.baz.qux.corge=1", "foo.bar.baz.qux.corge=1"},
 		{"foo.bar.baz.qux.corge.grault=1", "foo.bar.baz.qux.corge.grault=1"},
 		{"foo.bar.baz.qux.corge.grault.garply=1", "foo.bar.baz.qux.corge.grault.garply=1"},
+		{"foo.NOT.AND.qux.OR.grault.garply=1", "foo.NOT.AND.qux.OR.grault.garply=1"},
 
 		// function
 		{"foo.bar(1)=1", "foo.bar(1)=1"},

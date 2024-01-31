@@ -18,6 +18,10 @@ const (
 )
 
 func (t *Declaration[T]) WhereClause(filter *Filter) (T, error) {
+	if filter == nil || t == nil {
+		return zero[T](), nil
+	}
+
 	clause, err := t.expressionQuery(&filter.Expression)
 	if err != nil {
 		return zero[T](), err
@@ -95,13 +99,11 @@ func (t *Declaration[T]) termQuery(term *Term) (T, error) {
 }
 
 func (t *Declaration[T]) simpleQuery(simple *Simple) (T, error) {
-	if simple.Restriction != nil {
-		return t.restrictionQuery(simple.Restriction)
-	} else if simple.Composite != nil {
-		return t.expressionQuery(simple.Composite)
-	} else {
-		return zero[T](), fmt.Errorf("invalid 'simple' clause in query filter")
+	if !simple.IsComposite {
+		return t.restrictionQuery(&simple.Restriction)
 	}
+
+	return t.expressionQuery(&simple.Composite)
 }
 
 func (t *Declaration[T]) restrictionQuery(restriction *Restriction) (_ T, err error) {
@@ -136,40 +138,31 @@ func (t *Declaration[T]) restrictionQuery(restriction *Restriction) (_ T, err er
 			return eqBoolFunc.fieldWithValueBool(comparableCol.field, true)
 		}
 
-		var zeroInt int64 = 0
-		var zeroFloat float64 = 0
-		var zeroBool Boolean = false
-		var zeroString string = ""
-		if comparableValue.op(EqOp, &Value{
-			Int:     &zeroInt,
-			Float:   &zeroFloat,
-			Boolean: &zeroBool,
-			Str:     &zeroString,
-		}) {
+		if comparableValue.op(EqOp, &Value{Inner: ZeroIntoValue{}}) {
 			return falseFunc.noField(), nil
 		}
 
 		return trueFunc.noField(), nil
-	case (restriction.Arg.Composite != nil &&
+	case (restriction.Arg.IsComposite &&
 		hasComparableCol &&
 		comparableCol.combineDeclFilter != nil &&
 		comparableCol.declaration != nil &&
 		restriction.Operator == HasOp):
 		// allow nested filter:
 		// example: "pets:(name = 'cat' OR name = 'dog')"
-		w, err := comparableCol.declaration.expressionQuery(restriction.Arg.Composite)
+		w, err := comparableCol.declaration.expressionQuery(&restriction.Arg.Composite)
 		if err != nil {
 			return zero[T](), err
 		}
 
 		return comparableCol.combineDeclFilter(w)
-	case restriction.Arg.Composite != nil:
+	case restriction.Arg.IsComposite:
 		return zero[T](), fmt.Errorf("nested filter is not supported")
 	case hasComparableCol && (comparableCol.combineDeclFilter != nil || comparableCol.declaration != nil):
 		return zero[T](), fmt.Errorf("nested filter is not supported")
 	}
 
-	argValue, err := t.valueQueryFromComparable(restriction.Arg.Comparable)
+	argValue, err := t.valueQueryFromComparable(&restriction.Arg.Comparable)
 	if err != nil {
 		return zero[T](), err
 	}
@@ -198,38 +191,40 @@ func (t *Declaration[T]) restrictionQuery(restriction *Restriction) (_ T, err er
 			v = comparableValue
 		}
 
-		switch {
-		case v.Int != nil:
+		if isInt, ok := v.Inner.IntoInt(); ok {
 			fwiFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueIntSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
-			return fwiFunc.fieldWithValueInt(field, *v.Int)
+			return fwiFunc.fieldWithValueInt(field, isInt)
+		}
 
-		case v.Float != nil:
+		if isFloat, ok := v.Inner.IntoFloat(); ok {
 			fwfFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueFloatSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
-			return fwfFunc.fieldWithValueFloat(field, *v.Float)
+			return fwfFunc.fieldWithValueFloat(field, isFloat)
+		}
 
-		case v.Boolean != nil:
+		if isBool, ok := v.Inner.IntoBool(); ok {
 			fwbFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueBoolSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
-			return fwbFunc.fieldWithValueBool(field, bool(*v.Boolean))
+			return fwbFunc.fieldWithValueBool(field, isBool)
+		}
 
-		case v.Str != nil:
+		if isString, ok := v.Inner.IntoString(); ok {
 			fwsFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueStringSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
-			return fwsFunc.fieldWithValueString(field, *v.Str)
+			return fwsFunc.fieldWithValueString(field, isString)
 		}
 
 		return zero[T](), fmt.Errorf("unknown type of value")
@@ -251,7 +246,7 @@ func (t *Declaration[T]) valueQueryFromComparable(comparable *Comparable) (*Valu
 		return nil, fmt.Errorf("nested fields are not supported")
 	}
 
-	if comparable.Value.Wildcard {
+	if comparable.Value.Inner.IsWildcard() {
 		return nil, fmt.Errorf("wildcard is not supported")
 	}
 
@@ -259,14 +254,15 @@ func (t *Declaration[T]) valueQueryFromComparable(comparable *Comparable) (*Valu
 }
 
 func (t *Declaration[T]) columnFromValueQuery(v *Value) (*Column[T], bool, error) {
-	if v.Ident == "" {
+	ident, ok := v.Inner.IntoIdent()
+	if !ok {
 		return nil, false, nil
 	}
 
-	column, ok := t.getColumnByField(v.Ident, filterableSign)
+	column, ok := t.getColumnByField(ident, filterableSign)
 	if ok {
 		return column, true, nil
 	}
 
-	return nil, false, fmt.Errorf("unknown value '%s'", v.Ident)
+	return nil, false, fmt.Errorf("unknown value '%s'", ident)
 }

@@ -1,12 +1,66 @@
 package aipstr
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/alecthomas/participle/v2"
 	"github.com/alecthomas/participle/v2/lexer"
 )
+
+type IntoValue interface {
+	IntoInt() (int64, bool)
+	IntoFloat() (float64, bool)
+	IntoString() (string, bool)
+	IntoBool() (bool, bool)
+	IntoIdent() (string, bool)
+	IsWildcard() bool
+}
+
+type unimplementedIntoValue struct{}
+
+func (unimplementedIntoValue) IntoInt() (int64, bool) {
+	return 0, false
+}
+
+func (unimplementedIntoValue) IntoFloat() (float64, bool) {
+	return 0, false
+}
+
+func (unimplementedIntoValue) IntoString() (string, bool) {
+	return "", false
+}
+
+func (unimplementedIntoValue) IntoBool() (bool, bool) {
+	return false, false
+}
+
+func (unimplementedIntoValue) IntoIdent() (string, bool) {
+	return "", false
+}
+
+func (unimplementedIntoValue) IsWildcard() bool {
+	return false
+}
+
+type ZeroIntoValue struct{ unimplementedIntoValue }
+
+func (ZeroIntoValue) IntoInt() (int64, bool) {
+	return 0, true
+}
+
+func (ZeroIntoValue) IntoFloat() (float64, bool) {
+	return 0, true
+}
+
+func (ZeroIntoValue) IntoString() (string, bool) {
+	return "", true
+}
+
+func (ZeroIntoValue) IntoBool() (bool, bool) {
+	return false, true
+}
 
 func NewFilterLexer() *lexer.StatefulDefinition {
 	return lexer.MustSimple([]lexer.SimpleRule{
@@ -32,9 +86,10 @@ func NewFilterLexer() *lexer.StatefulDefinition {
 
 func NewFilterParser() *participle.Parser[Filter] {
 	return participle.MustBuild[Filter](
-		participle.Lexer(NewFilterLexer()),
+		participle.Lexer(FilterLexer),
 		participle.Unquote("String"),
 		participle.Elide("whitespace"),
+		participle.Union[IntoValue](WildcardValue{}, FloatValue{}, IntValue{}, StringValue{}, BooleanValue{}, IdentValue{}),
 	)
 }
 
@@ -43,6 +98,66 @@ type Boolean bool
 func (b *Boolean) Capture(values []string) error {
 	*b = values[0] == "true"
 	return nil
+}
+
+type BooleanValue struct {
+	unimplementedIntoValue
+
+	Value Boolean `parser:"@(True | False)"`
+}
+
+func (b BooleanValue) IntoBool() (bool, bool) {
+	return bool(b.Value), true
+}
+
+type FloatValue struct {
+	unimplementedIntoValue
+
+	Value float64 `parser:"@Float"`
+}
+
+func (f FloatValue) IntoFloat() (float64, bool) {
+	return f.Value, true
+}
+
+type IntValue struct {
+	unimplementedIntoValue
+
+	Value int64 `parser:"@Int"`
+}
+
+func (i IntValue) IntoInt() (int64, bool) {
+	return i.Value, true
+}
+
+type StringValue struct {
+	unimplementedIntoValue
+
+	Value string `parser:"@String"`
+}
+
+func (s StringValue) IntoString() (string, bool) {
+	return s.Value, true
+}
+
+type IdentValue struct {
+	unimplementedIntoValue
+
+	Value string `parser:"@Ident"`
+}
+
+func (i IdentValue) IntoIdent() (string, bool) {
+	return i.Value, true
+}
+
+type WildcardValue struct {
+	unimplementedIntoValue
+
+	Value bool `parser:"@Wildcard"`
+}
+
+func (w WildcardValue) IsWildcard() bool {
+	return w.Value
 }
 
 type Filter struct {
@@ -100,12 +215,13 @@ func (t *Term) String() string {
 }
 
 type Simple struct {
-	Restriction *Restriction `parser:"@@"`
-	Composite   *Expression  `parser:"| (LParen @@ RParen)"`
+	IsComposite bool        `parser:"(@LParen"`
+	Composite   Expression  `parser:"@@ RParen)"`
+	Restriction Restriction `parser:"| @@"`
 }
 
 func (s *Simple) String() string {
-	if s.Restriction != nil {
+	if !s.IsComposite {
 		return s.Restriction.String()
 	}
 
@@ -119,7 +235,7 @@ func (s *Simple) String() string {
 type Restriction struct {
 	Comparable Comparable `parser:"@@"`
 	Operator   string     `parser:"(@Operator"`
-	Arg        *Arg       `parser:"@@)?"`
+	Arg        Arg        `parser:"@@)?"`
 }
 
 func (r *Restriction) String() string {
@@ -161,74 +277,55 @@ func (c *Comparable) String() string {
 }
 
 type Value struct {
-	Wildcard bool     `parser:"@Wildcard"`
-	Float    *float64 `parser:"| @Float"`
-	Int      *int64   `parser:"| @Int"`
-	Str      *string  `parser:"| @String"`
-	Boolean  *Boolean `parser:"| @(True | False)"`
-	Ident    string   `parser:"| @Ident"`
+	Inner IntoValue `parser:"@@"`
+}
+
+func cmp[T int64 | string | float64](op string, a, b func() (T, bool)) bool {
+	if v1, ok := a(); ok {
+		if v2, ok := b(); ok {
+			switch op {
+			case EqOp:
+				return v1 == v2
+			case NeOp:
+				return v1 != v2
+			case GtOp:
+				return v1 > v2
+			case GeOp:
+				return v1 >= v2
+			case LtOp:
+				return v1 < v2
+			case LeOp:
+				return v1 <= v2
+			case HasOp:
+				return strings.Contains(fmt.Sprint(v1), fmt.Sprint(v2))
+			}
+		}
+	}
+
+	return false
 }
 
 func (v *Value) op(op string, v2 *Value) bool {
-	if v.Int != nil && v2.Int != nil {
-		switch op {
-		case EqOp:
-			return *v.Int == *v2.Int
-		case NeOp:
-			return *v.Int != *v2.Int
-		case GtOp:
-			return *v.Int > *v2.Int
-		case GeOp:
-			return *v.Int >= *v2.Int
-		case LtOp:
-			return *v.Int < *v2.Int
-		case LeOp:
-			return *v.Int <= *v2.Int
-		}
+	if ok := cmp(op, v.Inner.IntoInt, v2.Inner.IntoInt); ok {
+		return true
 	}
 
-	if v.Float != nil && v2.Float != nil {
-		switch op {
-		case EqOp:
-			return *v.Float == *v2.Float
-		case NeOp:
-			return *v.Float != *v2.Float
-		case GtOp:
-			return *v.Float > *v2.Float
-		case GeOp:
-			return *v.Float >= *v2.Float
-		case LtOp:
-			return *v.Float < *v2.Float
-		case LeOp:
-			return *v.Float <= *v2.Float
-		}
+	if ok := cmp(op, v.Inner.IntoFloat, v2.Inner.IntoFloat); ok {
+		return true
 	}
 
-	if v.Boolean != nil && v2.Boolean != nil {
-		switch op {
-		case EqOp:
-			return *v.Boolean == *v2.Boolean
-		case NeOp:
-			return *v.Boolean != *v2.Boolean
-		}
+	if ok := cmp(op, v.Inner.IntoString, v2.Inner.IntoString); ok {
+		return true
 	}
 
-	if v.Str != nil && v2.Str != nil {
-		switch op {
-		case EqOp:
-			return *v.Str == *v2.Str
-		case NeOp:
-			return *v.Str != *v2.Str
-		case GtOp:
-			return *v.Str > *v2.Str
-		case GeOp:
-			return *v.Str >= *v2.Str
-		case LtOp:
-			return *v.Str < *v2.Str
-		case LeOp:
-			return *v.Str <= *v2.Str
-		case HasOp:
-			return strings.Contains(*v.Str, *v2.Str)
+	if v1, ok := v.Inner.IntoBool(); ok {
+		if v2, ok := v2.Inner.IntoBool(); ok {
+			switch op {
+			case EqOp:
+				return v1 == v2
+			case NeOp:
+				return v1 != v2
+			}
 		}
 	}
 
@@ -236,52 +333,55 @@ func (v *Value) op(op string, v2 *Value) bool {
 }
 
 func (v *Value) String() string {
-	if v.Wildcard {
+	if v.Inner.IsWildcard() {
 		return "*"
 	}
 
-	if v.Int != nil {
-		return strconv.FormatInt(*v.Int, 10)
+	if isInt, ok := v.Inner.IntoInt(); ok {
+		return strconv.FormatInt(isInt, 10)
 	}
 
-	if v.Float != nil {
-		return strconv.FormatFloat(*v.Float, 'f', -1, 64)
+	if isFloat, ok := v.Inner.IntoFloat(); ok {
+		return strconv.FormatFloat(isFloat, 'f', -1, 64)
 	}
 
-	if v.Boolean != nil {
-		return strconv.FormatBool(bool(*v.Boolean))
+	if isBool, ok := v.Inner.IntoBool(); ok {
+		return strconv.FormatBool(isBool)
 	}
 
-	if v.Str != nil {
+	if isString, ok := v.Inner.IntoString(); ok {
 		var b strings.Builder
 		b.WriteString("\"")
-		b.WriteString(*v.Str)
+		b.WriteString(isString)
 		b.WriteString("\"")
 		return b.String()
 	}
 
-	return v.Ident
+	ident, _ := v.Inner.IntoIdent()
+	return ident
 }
 
 type Field struct {
-	Value   *Value `parser:"@@"`
-	Keyword string `parser:"| @(Not | And | Or)"`
+	Keyword string `parser:"@(Not | And | Or)"`
+	Value   Value  `parser:"| @@"`
 }
 
 func (f *Field) String() string {
-	if f.Value != nil {
-		return f.Value.String()
+	if f.Keyword != "" {
+		return f.Keyword
 	}
-	return f.Keyword
+
+	return f.Value.String()
 }
 
 type Arg struct {
-	Comparable *Comparable `parser:"(@@"`
-	Composite  *Expression `parser:"| LParen @@ RParen)"`
+	IsComposite bool       `parser:"(@LParen"`
+	Composite   Expression `parser:"@@ RParen)"`
+	Comparable  Comparable `parser:"| @@"`
 }
 
 func (a *Arg) String() string {
-	if a.Comparable != nil {
+	if !a.IsComposite {
 		return a.Comparable.String()
 	}
 
