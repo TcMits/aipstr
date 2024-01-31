@@ -184,37 +184,39 @@ func NewOperatorFunc[T any](name string, opts ...OperatorFuncOption[T]) *Declara
 	return &of
 }
 
-func (f *DeclarationOperatorFunc[T]) withSignature(s int) bool {
-	if s&fieldWithValueIntSign != 0 && f.fieldWithValueInt == nil {
-		return false
-	}
+func (f *DeclarationOperatorFunc[T]) withSignature(sign ...int) bool {
+	for _, s := range sign {
+		if s&fieldWithValueIntSign != 0 && f.fieldWithValueInt == nil {
+			return false
+		}
 
-	if s&fieldWithValueFloatSign != 0 && f.fieldWithValueFloat == nil {
-		return false
-	}
+		if s&fieldWithValueFloatSign != 0 && f.fieldWithValueFloat == nil {
+			return false
+		}
 
-	if s&fieldWithValueBoolSign != 0 && f.fieldWithValueBool == nil {
-		return false
-	}
+		if s&fieldWithValueBoolSign != 0 && f.fieldWithValueBool == nil {
+			return false
+		}
 
-	if s&fieldWithValueStringSign != 0 && f.fieldWithValueString == nil {
-		return false
-	}
+		if s&fieldWithValueStringSign != 0 && f.fieldWithValueString == nil {
+			return false
+		}
 
-	if s&fieldWithFieldSign != 0 && f.fieldWithField == nil {
-		return false
-	}
+		if s&fieldWithFieldSign != 0 && f.fieldWithField == nil {
+			return false
+		}
 
-	if s&fieldSign != 0 && f.field == nil {
-		return false
-	}
+		if s&fieldSign != 0 && f.field == nil {
+			return false
+		}
 
-	if s&noFieldSign != 0 && f.noField == nil {
-		return false
-	}
+		if s&noFieldSign != 0 && f.noField == nil {
+			return false
+		}
 
-	if s&combineSign != 0 && f.combine == nil {
-		return false
+		if s&combineSign != 0 && f.combine == nil {
+			return false
+		}
 	}
 
 	return true
@@ -251,26 +253,28 @@ func NewDeclaration[T any](opts ...DeclarationOption[T]) *Declaration[T] {
 	return &d
 }
 
-func (d *Declaration[T]) getColumnByField(field string, sign int) (*Column[T], bool) {
+func (d *Declaration[T]) getColumnByField(field string, sign ...int) (*Column[T], bool) {
 	column, ok := d.columns[field]
 	if !ok || column == nil {
 		return nil, false
 	}
 
-	if column.sign&sign == 0 {
-		return nil, false
+	for _, s := range sign {
+		if column.sign&s == 0 {
+			return nil, false
+		}
 	}
 
 	return column, true
 }
 
-func (d *Declaration[T]) getOperatorFunc(name string, sign int) (*DeclarationOperatorFunc[T], bool) {
+func (d *Declaration[T]) getOperatorFunc(name string, sign ...int) (*DeclarationOperatorFunc[T], bool) {
 	of, ok := d.ops[name]
 	if !ok || of == nil {
 		return nil, false
 	}
 
-	if !of.withSignature(sign) {
+	if !of.withSignature(sign...) {
 		return nil, false
 	}
 

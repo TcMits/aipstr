@@ -18,10 +18,6 @@ const (
 )
 
 func (t *Declaration[T]) WhereClause(filter *Filter) (T, error) {
-	if filter == nil || t == nil {
-		return zero[T](), nil
-	}
-
 	clause, err := t.expressionQuery(&filter.Expression)
 	if err != nil {
 		return zero[T](), err
@@ -198,27 +194,21 @@ func (t *Declaration[T]) restrictionQuery(restriction *Restriction) (_ T, err er
 			}
 
 			return fwiFunc.fieldWithValueInt(field, isInt)
-		}
-
-		if isFloat, ok := v.Inner.IntoFloat(); ok {
+		} else if isFloat, ok := v.Inner.IntoFloat(); ok {
 			fwfFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueFloatSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
 			return fwfFunc.fieldWithValueFloat(field, isFloat)
-		}
-
-		if isBool, ok := v.Inner.IntoBool(); ok {
+		} else if isBool, ok := v.Inner.IntoBool(); ok {
 			fwbFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueBoolSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
 			}
 
 			return fwbFunc.fieldWithValueBool(field, isBool)
-		}
-
-		if isString, ok := v.Inner.IntoString(); ok {
+		} else if isString, ok := v.Inner.IntoString(); ok {
 			fwsFunc, ok := t.getOperatorFunc(restriction.Operator, fieldWithValueStringSign)
 			if !ok {
 				return zero[T](), fmt.Errorf("unknown operator '%s'", restriction.Operator)
